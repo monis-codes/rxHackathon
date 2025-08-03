@@ -270,7 +270,7 @@ def get_answer_for_question_enhanced(
     question: str, 
     namespace: str,
     top_k: int = 5,
-    similarity_threshold: float = 0.7,
+    similarity_threshold: float = 0.5,
     max_context_length: int = 4000
 ) -> str:
     """
@@ -404,9 +404,9 @@ def get_answer_for_question_enhanced(
         prompt_template = f"""You are a helpful AI assistant. Answer the following question based ONLY on the context provided below. 
 
 IMPORTANT INSTRUCTIONS:
-- Use only the information provided in the context
+- Synthesize the information from the context into a concise and clear answer.
+- Do not quote the context verbatim. Summarize the key points.
 - If the answer is not found in the context, respond with "I could not find the answer in the provided document."
-- Be concise but complete in your answer
 - If multiple relevant pieces of information exist, synthesize them coherently
 - Do not make assumptions or add information not present in the context
 
@@ -423,7 +423,7 @@ Answer:"""
                 prompt_template,
                 generation_config={
                     'temperature': 0.1,  # Low temperature for more factual responses
-                    'max_output_tokens': 1000,
+                    'max_output_tokens': 2048,
                 }
             )
             

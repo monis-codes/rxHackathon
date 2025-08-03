@@ -80,7 +80,7 @@ class Answer(BaseModel):
     answer: str
 
 class HackathonResponse(BaseModel):
-    answers: List[Answer]
+    answers: List[str]
 
 
 # In main.py
@@ -136,7 +136,7 @@ async def run_hackathon_logic(
             final_answers = []
             for q in request.questions:
                 generated_answer = br.get_answer_for_question(index, q, namespace)
-                final_answers.append(Answer(question=q, answer=generated_answer))
+                final_answers.append(generated_answer)
 
             return HackathonResponse(answers=final_answers)
 
