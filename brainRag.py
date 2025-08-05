@@ -9,6 +9,8 @@ import google.generativeai as genai
 from pinecone import Pinecone
 from pinecone import PineconeException
 from pypdf import PdfReader
+# from openai import OpenAI
+from sentence_transformers import CrossEncoder
 from docx import Document  
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -19,6 +21,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+cross_encoder_model = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
 
 def detect_file_type(content: bytes) -> str:
     """
@@ -192,7 +196,7 @@ def process_document(index: Any, document_content: bytes, namespace: str, file_t
         for i, (chunk, embedding) in enumerate(zip(text_chunks, embedding_result['embedding'])):
             # Create unique ID using content hash + index
             chunk_hash = hashlib.md5(chunk.encode()).hexdigest()[:8]
-            vector_id = f"{namespace}_{chunk_hash}_{i}"
+            vector_id = f"{namespace}{chunk_hash}{i}"
             
             vectors_to_upsert.append({
                 "id": vector_id,
@@ -251,204 +255,129 @@ def namespace_exists(index: Any, namespace: str) -> bool:
         logger.error(f"Unexpected error checking namespace: {e}")
         raise
 
-def get_answer_for_question(index: Any, question: str, namespace: str) -> str:
-    """
-    Main function - matches your existing API call with 3 parameters.
-    This is what your main.py calls.
-    """
-    return get_answer_for_question_enhanced(
-        index=index,
-        question=question,
-        namespace=namespace,
-        top_k=5,
-        similarity_threshold=0.5,  # More permissive for backward compatibility
-        max_context_length=4000
-    )
+# HELPER FUNCTION FOR PHASE 1
+# In rag_logic.py
 
-def get_answer_for_question_enhanced(
-    index: Any, 
-    question: str, 
-    namespace: str,
-    top_k: int = 5,
-    similarity_threshold: float = 0.5,
-    max_context_length: int = 4000
-) -> str:
-    """
-    Embeds a question, queries Pinecone for relevant context, and generates an answer.
-    
-    Args:
-        index: Pinecone index instance
-        question: User's question
-        namespace: Pinecone namespace to query
-        top_k: Number of chunks to retrieve (default: 5)
-        similarity_threshold: Minimum similarity score for relevance (default: 0.7)
-        max_context_length: Maximum context length in characters (default: 4000)
-    
-    Returns:
-        str: Generated answer based on retrieved context
-        
-    Raises:
-        ValueError: If inputs are invalid
-        PineconeException: If Pinecone query fails
-        Exception: If embedding or generation fails
-    """
-    
-    # Enhanced input validation
-    if not index:
-        raise ValueError("Index cannot be None")
-    if not question or not question.strip():
-        raise ValueError("Question cannot be empty")
-    if not namespace or not namespace.strip():
-        raise ValueError("Namespace cannot be empty")
-    if top_k <= 0 or top_k > 100:
-        raise ValueError("top_k must be between 1 and 100")
-    if similarity_threshold < 0 or similarity_threshold > 1:
-        raise ValueError("similarity_threshold must be between 0 and 1")
-    
-    question = question.strip()
-    logger.info(f"Processing question: '{question[:50]}...' in namespace: {namespace}")
+# This is the updated function. You can remove the old one.
+def generate_verified_answer(context: str, question: str) -> str:
+    """Generates a high-fidelity, concise answer using Gemini 2.5 Flash and an enhanced, minimalistic prompt."""
+    logger.info("Generating final verified answer with Gemini 2.5 Flash...")
+
+    # The enhanced prompt for a concise, minimalistic answer
+    prompt = f"""You are a highly precise and minimalistic AI assistant. Your sole purpose is to answer a user's query based **EXCLUSIVELY** on the provided text context.
+
+Follow these strict output rules:
+- Provide a concise answer in 1-2 lines.
+- Provide the most relevant sentences from the context that support the answer, also in 1-2 lines.
+- Do not add any extra commentary, headers, or information. The output should be only the answer and the context.
+
+**Instructions:**
+1.  **Identify:** Scrutinize the provided context and find the exact sentences and data points relevant to the user's query.
+2.  **Synthesize:** Condense the identified information into a direct, 1-2 line answer.
+3.  **Verify:** Ensure every fact in your answer is present in the context and that the answer is completely devoid of unasked-for information.
+
+---
+*Provided Context:*
+{context}
+---
+*User Query:*
+{question}
+---
+
+*Final Output:*
+"""
     
     try:
-        # 1. Embed the user's question
-        embedding_model = "models/text-embedding-004"
+        # Use the Gemini 2.5 Flash model as requested
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
-        try:
-            question_embedding_result = genai.embed_content(
-                model=embedding_model,
-                content=question,
-                task_type="RETRIEVAL_QUERY"
-            )
-            
-            if not question_embedding_result or 'embedding' not in question_embedding_result:
-                raise ValueError("Failed to generate question embedding")
-                
-            question_embedding = question_embedding_result['embedding']
-            logger.debug("Successfully generated question embedding")
-            
-        except Exception as e:
-            logger.error(f"Failed to embed question: {e}")
-            raise ValueError(f"Question embedding failed: {e}")
-        
-        # 2. Query Pinecone for relevant text chunks
-        try:
-            query_results = index.query(
-                namespace=namespace,
-                vector=question_embedding,
-                top_k=top_k,
-                include_metadata=True,
-                include_values=False  # We don't need the vectors back
-            )
-            
-            if not query_results or 'matches' not in query_results:
-                logger.warning("No results returned from Pinecone query")
-                return "I could not find any relevant information in the provided document."
-                
-            matches = query_results.get('matches', [])
-            logger.info(f"Retrieved {len(matches)} chunks from Pinecone")
-            
-        except PineconeException as e:
-            logger.error(f"Pinecone query failed: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error during Pinecone query: {e}")
-            raise PineconeException(f"Query failed: {e}")
-        
-        # 3. Filter and construct context based on relevance
-        relevant_chunks = []
-        for match in matches:
-            score = match.get('score', 0)
-            metadata = match.get('metadata', {})
-            text = metadata.get('text', '').strip()
-            
-            if score >= similarity_threshold and text:
-                relevant_chunks.append({
-                    'text': text,
-                    'score': score,
-                    'chunk_index': metadata.get('chunk_index', 'unknown')
-                })
-                logger.debug(f"Added relevant chunk (score: {score:.3f})")
-        
-        if not relevant_chunks:
-            logger.warning(f"No chunks met similarity threshold of {similarity_threshold}")
-            return "I could not find sufficiently relevant information in the provided document to answer your question."
-        
-        # Build context with length management
-        context_parts = []
-        current_length = 0
-        
-        # Sort by relevance score (highest first)
-        relevant_chunks.sort(key=lambda x: x['score'], reverse=True)
-        
-        for chunk in relevant_chunks:
-            chunk_text = chunk['text']
-            # Add some separator and metadata
-            formatted_chunk = f"[Relevance: {chunk['score']:.2f}] {chunk_text}"
-            
-            if current_length + len(formatted_chunk) <= max_context_length:
-                context_parts.append(formatted_chunk)
-                current_length += len(formatted_chunk)
-            else:
-                # Add partial chunk if there's room
-                remaining_space = max_context_length - current_length - 50  # Leave buffer
-                if remaining_space > 100:  # Only add if meaningful amount of text fits
-                    context_parts.append(formatted_chunk[:remaining_space] + "...")
-                break
-        
-        if not context_parts:
-            return "The relevant information found was too lengthy to process. Please try a more specific question."
-        
-        context = "\n\n".join(context_parts)
-        logger.info(f"Built context with {len(context_parts)} chunks, {len(context)} characters")
-        
-        # 4. Generate the final answer
-        prompt_template = f"""You are a helpful AI assistant. Answer the following question based ONLY on the context provided below. 
-
-IMPORTANT INSTRUCTIONS:
-- Synthesize the information from the context into a concise and clear answer.
-- Do not quote the context verbatim. Summarize the key points.
-- If the answer is not found in the context, respond with "I could not find the answer in the provided document."
-- If multiple relevant pieces of information exist, synthesize them coherently
-- Do not make assumptions or add information not present in the context
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-        try:
-            generative_model = genai.GenerativeModel('gemini-1.5-flash')
-            response = generative_model.generate_content(
-                prompt_template,
-                generation_config={
-                    'temperature': 0.1,  # Low temperature for more factual responses
-                    'max_output_tokens': 2048,
-                }
-            )
-            
-            if not response or not response.text:
-                raise ValueError("Empty response from generative model")
-            
-            answer = response.text.strip()
-            logger.info("Successfully generated answer")
-            
-            # Basic quality check
-            if len(answer) < 10:
-                logger.warning("Generated answer seems too short")
-            
-            return answer
-            
-        except Exception as e:
-            logger.error(f"Failed to generate answer: {e}")
-            raise ValueError(f"Answer generation failed: {e}")
-    
-    except ValueError:
-        # Re-raise validation errors as-is
-        raise
-    except PineconeException:
-        # Re-raise Pinecone errors as-is
-        raise
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                'temperature': 0.0 # Set to 0.0 for maximum factuality
+            }
+        )
+        return response.text.strip()
     except Exception as e:
-        logger.error(f"Unexpected error in get_answer_for_question: {e}")
-        raise ValueError(f"Question processing failed: {e}")
+        logger.error(f"Gemini generation failed: {e}")
+        return "There was an error generating the final answer."
+# HELPER FUNCTION FOR PHASE 2
+def generate_hypothetical_document(question: str) -> str:
+    """Uses a fast LLM to generate a hypothetical answer to a question (HyDE)."""
+    logger.info(f"Generating HyDE document for question: '{question}'")
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""Write a short, ideal answer paragraph for the following user question. This paragraph should be written in the formal style of a policy document and will be used to find similar-sounding passages in a vector search.
+
+        Question: "{question}"
+        
+        Ideal Answer Paragraph:
+        """
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"HyDE generation failed: {e}")
+        return question # Fallback to using the original question
+
+# HELPER FUNCTION FOR PHASE 3
+def rerank_with_cross_encoder(question: str, chunks: list) -> list:
+
+    """Reranks retrieved chunks using a Cross-Encoder model."""
+    logger.info(f"Re-ranking {len(chunks)} chunks with Cross-Encoder...")
+    if not chunks:
+        return []
+    
+    # Prepare pairs of [original_question, chunk_text] for the model
+    pairs = [[question, chunk['metadata']['text']] for chunk in chunks]
+    
+    # Get scores
+    scores = cross_encoder_model.predict(pairs)
+    
+    # Add scores back to the chunks
+    for i in range(len(chunks)):
+        chunks[i]['rerank_score'] = scores[i]
+            
+    # Sort chunks by the new score in descending order
+    return sorted(chunks, key=lambda x: x['rerank_score'], reverse=True)
+
+# FINAL, INTEGRATED FUNCTION - Replace your old get_answer_for_question function with this.
+
+def get_answer_for_question(index: 'Index', question: str, namespace: str) -> str:
+    logger.info(f"Starting advanced RAG for question: '{question}'")
+
+    # === PHASE 2: HYDE RETRIEVAL ===
+    hypothetical_doc = generate_hypothetical_document(question)
+    
+    # Embed the HYPOTHETICAL document for the search
+    search_embedding = genai.embed_content(
+        model="models/text-embedding-004", 
+        content=hypothetical_doc, 
+        task_type="RETRIEVAL_DOCUMENT" # Use this type as the hypothetical doc is like a document
+    )['embedding']
+    
+    # Retrieve a broad set of 20 candidates for re-ranking
+    retrieved_chunks = index.query(
+        namespace=namespace, 
+        vector=search_embedding, 
+        top_k=20, 
+        include_metadata=True
+    ).get('matches', [])
+
+    if not retrieved_chunks:
+        return "Could not find any relevant information in the document to answer the question."
+
+    # === PHASE 3: CROSS-ENCODER RE-RANKING ===
+    # Re-rank the 20 chunks against the ORIGINAL question for precision
+    reranked_chunks = rerank_with_cross_encoder(question, retrieved_chunks)
+    
+    # Select the top 5 most relevant chunks for the final context
+    top_k_reranked = reranked_chunks[:5]
+    
+    # Assemble the final context from the best chunks
+    final_context = "\n\n".join([chunk['metadata']['text'] for chunk in top_k_reranked])
+
+    # === PHASE 1: ADVANCED GENERATION ===
+    # Generate the final, verified answer using the best context and GPT-4
+    final_answer = generate_verified_answer(final_context, question)
+    
+    return final_answer
