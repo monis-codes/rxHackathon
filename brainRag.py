@@ -9,7 +9,6 @@ import google.generativeai as genai
 from pinecone import Pinecone
 from pinecone import PineconeException
 from pypdf import PdfReader
-# from openai import OpenAI
 from sentence_transformers import CrossEncoder
 from docx import Document  
 from typing import TYPE_CHECKING
@@ -21,7 +20,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 cross_encoder_model = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
 
 def detect_file_type(content: bytes) -> str:
@@ -306,7 +304,7 @@ def generate_hypothetical_document(question: str) -> str:
     """Uses a fast LLM to generate a hypothetical answer to a question (HyDE)."""
     logger.info(f"Generating HyDE document for question: '{question}'")
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""Write a short, ideal answer paragraph for the following user question. This paragraph should be written in the formal style of a policy document and will be used to find similar-sounding passages in a vector search.
 
         Question: "{question}"

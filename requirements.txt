@@ -7,5 +7,4 @@ pypdf
 python-dotenv
 requests
 sentence-transformers
-openai  
 python-docx
