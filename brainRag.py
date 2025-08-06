@@ -259,28 +259,36 @@ def generate_verified_answer(context: str, question: str) -> str:
     logger.info("Generating final verified answer with Gemini 2.5 Flash...")
 
     # The enhanced prompt for a concise, minimalistic answer
-    prompt = f"""You are a highly precise and minimalistic AI assistant. Your sole purpose is to answer a user's query based **EXCLUSIVELY** on the provided text context.
+    # In the generate_verified_answer function...
+    prompt = f"""You are a highly precise AI assistant...
 
-Follow these strict output rules:
-- Provide a concise answer in 1-2 lines.
-- Provide the most relevant sentences from the context that support the answer, also in 1-2 lines.
-- Do not add any extra commentary, headers, or information. The output should be only the answer and the context.
+    # ... (keep the first part of the prompt the same) ...
 
-**Instructions:**
-1.  **Identify:** Scrutinize the provided context and find the exact sentences and data points relevant to the user's query.
-2.  **Synthesize:** Condense the identified information into a direct, 1-2 line answer.
-3.  **Verify:** Ensure every fact in your answer is present in the context and that the answer is completely devoid of unasked-for information.
+    After performing these steps, provide ONLY the final, verified answer.
 
----
-*Provided Context:*
-{context}
----
-*User Query:*
-{question}
----
+    ---
+    **Example:**
 
-*Final Output:*
-"""
+    **Provided Context:**
+    The waiting period for specific diseases shall be 24 months of continuous coverage. This includes, but is not limited to, Cataract surgery and Benign Prostatic Hypertrophy. For joint replacement surgery, the waiting period is 36 months unless it is necessitated by an accident.
+
+    **User Query:**
+    What is the waiting period for cataract surgery?
+
+    **Final Verified Answer:**
+    The waiting period for cataract surgery is 24 months of continuous coverage.
+    ---
+
+    **Provided Context:**
+    {context}
+    ---
+    **User Query:**
+    {question}
+    ---
+
+    **Final Verified Answer:**
+    """
+#...
     
     try:
         # Use the Gemini 2.5 Flash model as requested
@@ -289,7 +297,8 @@ Follow these strict output rules:
         response = model.generate_content(
             prompt,
             generation_config={
-                'temperature': 0.0 # Set to 0.0 for maximum factuality
+                'temperature': 0.0,
+                'max_output_tokens': 2048 # Set to 0.0 for maximum factuality
             }
         )
         return response.text.strip()
