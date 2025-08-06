@@ -10,6 +10,7 @@ from pinecone import Pinecone
 from pinecone import PineconeException
 from pypdf import PdfReader
 from sentence_transformers import CrossEncoder
+from typing import Optional
 from docx import Document  
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-cross_encoder_model = CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')
+cross_encoder_model: Optional[CrossEncoder] = None
 
 def detect_file_type(content: bytes) -> str:
     """
@@ -253,10 +254,6 @@ def namespace_exists(index: Any, namespace: str) -> bool:
         logger.error(f"Unexpected error checking namespace: {e}")
         raise
 
-# HELPER FUNCTION FOR PHASE 1
-# In rag_logic.py
-
-# This is the updated function. You can remove the old one.
 def generate_verified_answer(context: str, question: str) -> str:
     """Generates a high-fidelity, concise answer using Gemini 2.5 Flash and an enhanced, minimalistic prompt."""
     logger.info("Generating final verified answer with Gemini 2.5 Flash...")
@@ -299,7 +296,7 @@ Follow these strict output rules:
     except Exception as e:
         logger.error(f"Gemini generation failed: {e}")
         return "There was an error generating the final answer."
-# HELPER FUNCTION FOR PHASE 2
+
 def generate_hypothetical_document(question: str) -> str:
     """Uses a fast LLM to generate a hypothetical answer to a question (HyDE)."""
     logger.info(f"Generating HyDE document for question: '{question}'")
@@ -317,28 +314,40 @@ def generate_hypothetical_document(question: str) -> str:
         logger.error(f"HyDE generation failed: {e}")
         return question # Fallback to using the original question
 
-# HELPER FUNCTION FOR PHASE 3
-def rerank_with_cross_encoder(question: str, chunks: list) -> list:
+def get_cross_encoder_model() -> CrossEncoder:
+    """
+    Lazily loads the CrossEncoder model on the first call and caches it.
+    This is the singleton pattern.
+    """
+    global cross_encoder_model
+    
+    if cross_encoder_model is None:
+        # This block only runs ONCE, during the first API request
+        logger.info("Lazy loading CrossEncoder model for the first time...")
+        
+        model_path = 'cross-encoder/ms-marco-TinyBERT-L-2-v2'
+        cross_encoder_model = CrossEncoder(model_path)
+        logger.info("CrossEncoder model loaded successfully.")
+        
+    return cross_encoder_model
 
-    """Reranks retrieved chunks using a Cross-Encoder model."""
-    logger.info(f"Re-ranking {len(chunks)} chunks with Cross-Encoder...")
+def rerank_with_cross_encoder(question: str, chunks: list) -> list:
+    """Reranks retrieved chunks using the lazily-loaded Cross-Encoder model."""
+    logger.info(f"Re-ranking {len(chunks)} chunks...")
     if not chunks:
         return []
     
-    # Prepare pairs of [original_question, chunk_text] for the model
+    # 2. Call the getter function to get the model instance
+    model = get_cross_encoder_model()
+    
+    # The rest of the function remains the same
     pairs = [[question, chunk['metadata']['text']] for chunk in chunks]
+    scores = model.predict(pairs)
     
-    # Get scores
-    scores = cross_encoder_model.predict(pairs)
-    
-    # Add scores back to the chunks
     for i in range(len(chunks)):
         chunks[i]['rerank_score'] = scores[i]
             
-    # Sort chunks by the new score in descending order
     return sorted(chunks, key=lambda x: x['rerank_score'], reverse=True)
-
-# FINAL, INTEGRATED FUNCTION - Replace your old get_answer_for_question function with this.
 
 def get_answer_for_question(index: 'Index', question: str, namespace: str) -> str:
     logger.info(f"Starting advanced RAG for question: '{question}'")
