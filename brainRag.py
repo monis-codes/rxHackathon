@@ -282,7 +282,7 @@ def generate_verified_answer(context: str, question: str) -> str:
     
     try:
         # CORRECTED: Use a valid, powerful model name for the best quality answer
-        model = genai.GenerativeModel('gemini-2.5-pro')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         response = model.generate_content(
             prompt,
