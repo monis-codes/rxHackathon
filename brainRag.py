@@ -255,73 +255,71 @@ def namespace_exists(index: Any, namespace: str) -> bool:
         raise
 
 def generate_verified_answer(context: str, question: str) -> str:
-    """Generates a high-fidelity, concise answer using Gemini 2.5 Flash and an enhanced, minimalistic prompt."""
-    logger.info("Generating final verified answer with Gemini 2.5 Flash...")
+    """Generates a high-fidelity, concise answer using Gemini 1.5 Pro."""
+    logger.info("Generating final verified answer with Gemini 1.5 Pro...")
 
-    # The enhanced prompt for a concise, minimalistic answer
-    # In the generate_verified_answer function...
-    prompt = f"""You are a highly precise AI assistant...
+    prompt = f"""Answer the question using ONLY the provided context. Be precise and include all relevant details.
 
-    # ... (keep the first part of the prompt the same) ...
+        **Example:**
 
-    After performing these steps, provide ONLY the final, verified answer.
+        **Provided Context:**
+        The waiting period for specific diseases shall be 24 months of continuous coverage. This includes, but is not limited to, Cataract surgery and Benign Prostatic Hypertrophy. For joint replacement surgery, the waiting period is 36 months unless it is necessitated by an accident.
 
-    ---
-    **Example:**
+        **User Query:**
+        What is the waiting period for cataract surgery?
 
-    **Provided Context:**
-    The waiting period for specific diseases shall be 24 months of continuous coverage. This includes, but is not limited to, Cataract surgery and Benign Prostatic Hypertrophy. For joint replacement surgery, the waiting period is 36 months unless it is necessitated by an accident.
+        **Final Verified Answer:**
+        The waiting period for cataract surgery is 24 months of continuous coverage.
+        ---
 
-    **User Query:**
-    What is the waiting period for cataract surgery?
+        **Provided Context:**
+        {context}
 
-    **Final Verified Answer:**
-    The waiting period for cataract surgery is 24 months of continuous coverage.
-    ---
+        **User Query:**
+        {question}
 
-    **Provided Context:**
-    {context}
-    ---
-    **User Query:**
-    {question}
-    ---
-
-    **Final Verified Answer:**
-    """
-#...
+        **Final Verified Answer:**"""
     
     try:
-        # Use the Gemini 2.5 Flash model as requested
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # CORRECTED: Use a valid, powerful model name for the best quality answer
+        model = genai.GenerativeModel('gemini-2.5-pro')
         
         response = model.generate_content(
             prompt,
             generation_config={
-                'temperature': 0.0,
-                'max_output_tokens': 2048 # Set to 0.0 for maximum factuality
+                'temperature': 0.0,           # Set to 0.0 for maximum factuality
+                'max_output_tokens': 2048
             }
         )
-        return response.text.strip()
+        
+        # CORRECTED: Add robust check to prevent crashes on empty response
+        if response.parts:
+            return response.text.strip()
+        else:
+            # This handles cases where the model returns nothing (e.g., safety block)
+            logger.warning(f"Gemini Pro returned an empty response. Finish Reason: {response.candidates[0].finish_reason}")
+            return "The model could not generate a verified answer based on the context."
+
     except Exception as e:
-        logger.error(f"Gemini generation failed: {e}")
+        logger.error(f"Gemini Pro generation failed: {e}")
         return "There was an error generating the final answer."
 
-def generate_hypothetical_document(question: str) -> str:
-    """Uses a fast LLM to generate a hypothetical answer to a question (HyDE)."""
-    logger.info(f"Generating HyDE document for question: '{question}'")
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""Write a short, ideal answer paragraph for the following user question. This paragraph should be written in the formal style of a policy document and will be used to find similar-sounding passages in a vector search.
+# def generate_hypothetical_document(question: str) -> str:
+#     """Uses a fast LLM to generate a hypothetical answer to a question (HyDE)."""
+#     logger.info(f"Generating HyDE document for question: '{question}'")
+#     try:
+#         model = genai.GenerativeModel('gemini-2.5-flash')
+#         prompt = f"""Write a short, ideal answer paragraph for the following user question. This paragraph should be written in the formal style of a policy document and will be used to find similar-sounding passages in a vector search.
 
-        Question: "{question}"
+#         Question: "{question}"
         
-        Ideal Answer Paragraph:
-        """
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"HyDE generation failed: {e}")
-        return question # Fallback to using the original question
+#         Ideal Answer Paragraph:
+#         """
+#         response = model.generate_content(prompt)
+#         return response.text.strip()
+#     except Exception as e:
+#         logger.error(f"HyDE generation failed: {e}")
+#         return question # Fallback to using the original question
 
 def get_cross_encoder_model() -> CrossEncoder:
     """
@@ -362,13 +360,13 @@ def get_answer_for_question(index: 'Index', question: str, namespace: str) -> st
     logger.info(f"Starting advanced RAG for question: '{question}'")
 
     # === PHASE 2: HYDE RETRIEVAL ===
-    hypothetical_doc = generate_hypothetical_document(question)
+    # hypothetical_doc = generate_hypothetical_document(question)
     
     # Embed the HYPOTHETICAL document for the search
     search_embedding = genai.embed_content(
         model="models/text-embedding-004", 
-        content=hypothetical_doc, 
-        task_type="RETRIEVAL_DOCUMENT" # Use this type as the hypothetical doc is like a document
+        content=question, 
+        task_type="RETRIEVAL_QUERY" # Use this type as the hypothetical doc is like a document
     )['embedding']
     
     # Retrieve a broad set of 20 candidates for re-ranking
@@ -387,10 +385,21 @@ def get_answer_for_question(index: 'Index', question: str, namespace: str) -> st
     reranked_chunks = rerank_with_cross_encoder(question, retrieved_chunks)
     
     # Select the top 5 most relevant chunks for the final context
+# Select top 5 for final context
     top_k_reranked = reranked_chunks[:5]
-    
-    # Assemble the final context from the best chunks
-    final_context = "\n\n".join([chunk['metadata']['text'] for chunk in top_k_reranked])
+
+    if top_k_reranked:
+        # Get the single best chunk (which is the first in the sorted list)
+        best_chunk = top_k_reranked.pop(0)
+        
+        # Create a list of the other chunks' text
+        other_chunks_text = [chunk['metadata']['text'] for chunk in top_k_reranked]
+        
+        # Build the final context with the best chunk placed at the very end for emphasis
+        final_context_parts = other_chunks_text + [best_chunk['metadata']['text']]
+        final_context = "\n\n---\n\n".join(final_context_parts)
+    else:
+        final_context = ""
 
     # === PHASE 1: ADVANCED GENERATION ===
     # Generate the final, verified answer using the best context and GPT-4
