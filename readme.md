@@ -2,7 +2,7 @@
 
 A production-ready **Retrieval-Augmented Generation (RAG)** system that intelligently processes documents and answers questions with enterprise-grade reliability and performance.
 
-## 🌟 What Makes Our RAG Pipeline Stand Out
+## 🌟 What Makes Our RAG Pipeline Stand Out yes
 
 ### 🧠 **Intelligent Document Processing**
 - **Multi-format Support**: Seamlessly handles PDFs and DOCX files with automatic format detection
