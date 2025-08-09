@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+google-generativeai
+pinecone
+pypdf
+python-dotenv
+requests
+sentence-transformers
+python-docx
+beautifulsoup4
