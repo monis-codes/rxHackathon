@@ -9,3 +9,5 @@ requests
 sentence-transformers
 python-docx
 beautifulsoup4
+python-docx
+

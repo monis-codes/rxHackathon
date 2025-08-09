@@ -217,7 +217,7 @@ def smart_chunk_text(text: str, max_chunk_size: int = 1500, overlap: int = 200) 
 
 def process_document(index: Any, document_content: bytes, namespace: str, file_type: str = None):
     """
-    Processes a document (PDF or DOCX) by extracting text, chunking, embedding, and upserting into Pinecone.
+    Processes a document (PDF or DOCX or EML) by extracting text, chunking, embedding, and upserting into Pinecone.
     """
     # Input validation
     if not index:
